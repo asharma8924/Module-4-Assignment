@@ -1,0 +1,87 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import re
+import nltk
+from nltk.corpus import stopwords
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+
+# Download stopwords if needed
+nltk.download('stopwords')
+
+# Load the dataset
+df = pd.read_csv('netflix_titles.csv')
+
+# Keep only relevant fields and drop nulls
+df = df[['title', 'description']].dropna()
+
+# Basic preprocessing
+def clean_text(text):
+    text = text.lower()
+    text = re.sub(r'[^a-zA-Z\s]', '', text)
+    tokens = text.split()
+    stop_words = set(stopwords.words('english'))
+    tokens = [word for word in tokens if word not in stop_words]
+    return ' '.join(tokens)
+
+df['clean_description'] = df['description'].apply(clean_text)
+
+# Vectorize descriptions using TF-IDF
+vectorizer = TfidfVectorizer(max_df=0.8, min_df=5)
+X = vectorizer.fit_transform(df['clean_description'])
+
+# Elbow method to determine optimal k
+wcss = []
+K = range(1, 15)
+for k in K:
+    km = KMeans(n_clusters=k, random_state=42)
+    km.fit(X)
+    wcss.append(km.inertia_)
+
+# Plot elbow
+plt.figure(figsize=(10, 6))
+plt.plot(K, wcss, 'bo-')
+plt.xlabel('Number of clusters (k)')
+plt.ylabel('Within-cluster Sum of Squares (WCSS)')
+plt.title('Elbow Method For Optimal k')
+plt.grid()
+plt.show()
+
+# From elbow method we choose k = 5
+k = 5
+kmeans = KMeans(n_clusters=k, random_state=42)
+clusters = kmeans.fit_predict(X)
+
+# Add cluster labels to dataframe
+df['cluster'] = clusters
+
+# Show top terms per cluster
+def get_top_keywords(model, vectorizer, n_terms=10):
+    terms = vectorizer.get_feature_names_out()
+    order_centroids = model.cluster_centers_.argsort()[:, ::-1]
+    cluster_keywords = {}
+    for i in range(model.n_clusters):
+        keywords = [terms[ind] for ind in order_centroids[i, :n_terms]]
+        cluster_keywords[i] = keywords
+    return cluster_keywords
+
+top_keywords = get_top_keywords(kmeans, vectorizer)
+for cluster, keywords in top_keywords.items():
+    print(f"\nCluster {cluster} keywords: {', '.join(keywords)}")
+    print("Sample titles:")
+    print(df[df['cluster'] == cluster]['title'].head(2).tolist())
+
+# Visualize clusters using PCA
+pca = PCA(n_components=2, random_state=42)
+X_reduced = pca.fit_transform(X.toarray())
+
+plt.figure(figsize=(10, 7))
+sns.scatterplot(x=X_reduced[:, 0], y=X_reduced[:, 1], hue=clusters, palette="Set2")
+plt.title('2D Visualization of Netflix Descriptions Clusters')
+plt.xlabel('PCA Component 1')
+plt.ylabel('PCA Component 2')
+plt.legend(title='Cluster')
+plt.show()
